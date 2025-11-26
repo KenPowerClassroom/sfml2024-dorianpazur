@@ -1,13 +1,21 @@
 #include <SFML/Graphics.hpp>
 using namespace sf;
 
-int width = 1024;
-int height = 768;
-int roadW = 2000;
-int segL = 200; //segment length
-float camD = 0.84; //camera depth
+const uint32_t FPS = 60;
+const uint32_t WINDOW_WIDTH = 1024;
+const uint32_t WINDOW_HEIGHT = 768;
+const int ROAD_WIDTH = 2000;
+const int SEGMENT_LENGTH = 200; //segment length
+const float CAMERA_DEPTH = 0.84f; //camera depth
+const float Y_POS_MIN = 1500.0f;
+const float X_POS_RANGE = 1.0f;
+const float MAX_SPEED = 500.0f;
+const float MIN_SPEED = 10.0f;
+const float ACCEL = 4.0f;
+const float DRAG = 1.0f / (FPS * 1000.0f);
+const float BRAKE_DRAG = 50.0f / (FPS * 1000.0f);
 
-void drawQuad(RenderWindow &w, Color c, int x1,int y1,int w1,int x2,int y2,int w2)
+void drawQuad(RenderWindow &w, Color c, float x1, float y1, float w1, float x2, float y2, float w2)
 {
     ConvexShape shape(4);
     shape.setFillColor(c);
@@ -20,9 +28,9 @@ void drawQuad(RenderWindow &w, Color c, int x1,int y1,int w1,int x2,int y2,int w
 
 struct Line
 {
-    float x,y,z; //3d center of line
-    float X,Y,W; //screen coord
-    float curve,spriteX,clip,scale;
+    float x = 0,y = 0,z = 0; //3d center of line
+    float screenX = 0,screenY = 0,screenWidth = 0; //screen coord
+    float curve = 0,spriteX = 0,clip = 0,scale = 0;
     Sprite sprite;
     
     Line()
@@ -30,12 +38,12 @@ struct Line
         spriteX = curve = x = y = z = 0;
     }
     
-    void project(int camX,int camY,int camZ)
+    void project(float camX,float camY,float camZ)
     {
-        scale = camD/(z-camZ);
-        X = (1 + scale*(x - camX)) * width/2;
-        Y = (1 - scale*(y - camY)) * height/2;
-        W = scale * roadW  * width/2;
+        scale = CAMERA_DEPTH/std::fmaxf(0, z-camZ);
+        screenX = (1 + scale*(x - camX)) * WINDOW_WIDTH/2;
+        screenY = (1 - scale*(y - camY)) * WINDOW_HEIGHT/2;
+        screenWidth = scale * ROAD_WIDTH  * WINDOW_WIDTH/2;
     }
     
     void drawSprite(RenderWindow &app)
@@ -44,10 +52,10 @@ struct Line
         int w = s.getTextureRect().width;
         int h = s.getTextureRect().height;
         
-        float destX = X + scale * spriteX * width/2;
-        float destY = Y + 4;
-        float destW  = w * W / 266;
-        float destH  = h * W / 266;
+        float destX = screenX + scale * spriteX * WINDOW_WIDTH/2;
+        float destY = screenY + 4;
+        float destW  = w * screenWidth / 266;
+        float destH  = h * screenWidth / 266;
         
         destX += destW * spriteX; //offsetX
         destY += destH * (-1);    //offsetY
@@ -63,14 +71,26 @@ struct Line
     }
 };
 
+// moved these out of the function so it doesn't complain about stack usage
+float xPos = 0;
+float yPos = Y_POS_MIN;
+float zPos = 0;
+float speed = 0;
+std::vector<Line> lines;
+
+Texture t[50];
+Sprite object[50];
+
+float lerp(float a, float b, float t)
+{
+    return (a * (1.0f - t)) + (b * t);
+}
 
 int outrun()
 {
-    RenderWindow app(VideoMode(width, height), "Outrun Racing!");
-    app.setFramerateLimit(60);
+    RenderWindow app(VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Outrun Racing!");
+    app.setFramerateLimit(FPS);
 
-    Texture t[50];
-    Sprite object[50];
     for (int i=1;i<=7;i++)
     {
         t[i].loadFromFile("images/outrun/" + std::to_string(i) + ".png");
@@ -85,12 +105,10 @@ int outrun()
     sBackground.setTextureRect(IntRect(0,0,5000,411));
     sBackground.setPosition(-2000,0);
 
-    std::vector<Line> lines;
-
     for(int i = 0; i < 1600; i++)
     {
         Line line;
-        line.z = i*segL;
+        line.z = i*SEGMENT_LENGTH;
 
         if (i>300 && i<700) line.curve=0.5;
         if (i>1100) line.curve=-0.7;
@@ -101,15 +119,12 @@ int outrun()
         if (i>800 && i%20==0) {line.spriteX=-1.2; line.sprite=object[1];}
         if (i==400)           {line.spriteX=-1.2; line.sprite=object[7];}
 
-        if (i>750) line.y = sin(i/30.0)*1500;
+        if (i>750) line.y = sin(i/30.0) * Y_POS_MIN;
 
         lines.push_back(line);
     }
 
-    int N = lines.size();
-    float playerX = 0;
-    int pos = 0;
-    int H = 1500;
+    int lineCount = lines.size();
 
     while (app.isOpen())
     {
@@ -120,56 +135,100 @@ int outrun()
                 app.close();
         }
         
-        int speed=0;
+        float accel = ACCEL;
+        float drag = DRAG;
+
+        if (Keyboard::isKeyPressed(Keyboard::Right)) xPos+=0.1;
+        if (Keyboard::isKeyPressed(Keyboard::Left)) xPos-=0.1;
+        if (Keyboard::isKeyPressed(Keyboard::Tab)) accel *= 3.0f;
+        if (Keyboard::isKeyPressed(Keyboard::Up))
+        {
+            if (speed >= 0.0f)
+            {
+                speed += ACCEL * (1.0f - std::fmin(1.0f, std::fabsf(speed / MAX_SPEED))); // drive forward
+            }
+            else // apply brakes if reversing
+            {
+                drag += BRAKE_DRAG / std::fabsf(speed) + 0.001f; // simulate wheel slip
+            }
+
+        }
+        if (Keyboard::isKeyPressed(Keyboard::Down))
+        {
+            if (speed <= 0.0f)
+            {
+                speed -= ACCEL * (1.0f - std::fmin(1.0f, std::fabsf(speed / (MAX_SPEED * 0.25f)))); // reverse
+            }
+            else // apply brakes if driving forward
+            {
+                drag += BRAKE_DRAG / std::fabsf(speed) + 0.001f; // simulate wheel slip
+            }
+        }
+        if (Keyboard::isKeyPressed(Keyboard::W)) yPos+=100;
+        if (Keyboard::isKeyPressed(Keyboard::S)) yPos-=100;
         
-        if (Keyboard::isKeyPressed(Keyboard::Right)) playerX+=0.1;
-        if (Keyboard::isKeyPressed(Keyboard::Left)) playerX-=0.1;
-        if (Keyboard::isKeyPressed(Keyboard::Up)) speed=200;
-        if (Keyboard::isKeyPressed(Keyboard::Down)) speed=-200;
-        if (Keyboard::isKeyPressed(Keyboard::Tab)) speed*=3;
-        if (Keyboard::isKeyPressed(Keyboard::W)) H+=100;
-        if (Keyboard::isKeyPressed(Keyboard::S)) H-=100;
+        speed /= 1 + (std::fabsf(speed) * drag); // apply drag
+        if (std::fabsf(speed) < MIN_SPEED && drag != DRAG) // is braking and going too slow
+            speed = 0.0f; // stop
+
+        // hard limit speed
+        speed = std::fmaxf(-MAX_SPEED, std::fminf(speed, MAX_SPEED));
+
+        zPos+=speed;
+        //while (zPos >= lineCount*SEGMENT_LENGTH) zPos-=lineCount*SEGMENT_LENGTH;
+        //while (zPos < 0) zPos += lineCount*SEGMENT_LENGTH;
+        zPos = zPos - (lineCount * SEGMENT_LENGTH) * floor(zPos / (lineCount * SEGMENT_LENGTH));
+
+        // clamp values to prevent crashes
+        yPos = std::fmax(Y_POS_MIN, yPos);
+        xPos = std::fmax(-X_POS_RANGE, std::fmin(X_POS_RANGE, xPos));
         
-        pos+=speed;
-        while (pos >= N*segL) pos-=N*segL;
-        while (pos < 0) pos += N*segL;
-        
+        float zPosFrac = std::fmodf(zPos, SEGMENT_LENGTH) / SEGMENT_LENGTH;
         app.clear(Color(105,205,4));
         app.draw(sBackground);
-        int startPos = pos/segL;
-        int camH = lines[startPos].y + H;
-        if (speed>0) sBackground.move(-lines[startPos].curve*2,0);
-        if (speed<0) sBackground.move( lines[startPos].curve*2,0);
+        int startPos = zPos/SEGMENT_LENGTH;
+        float camH = lerp(lines[(size_t)startPos].y, lines[((size_t)startPos + 1) % lineCount].y, zPosFrac) + yPos;
+        sBackground.move(lines[(size_t)startPos].curve*-speed*0.01f,0);
         
-        int maxy = height;
+        float screenY = 0;
+        float maxy = WINDOW_HEIGHT;
         float x = 0, dx = 0;
         
         ///////draw road////////
-        for (int n = startPos; n<startPos+300; n++)  
+        for (int lineIdx = startPos; lineIdx<startPos+300; lineIdx++)
         {
-            Line &l = lines[n%N];
-            l.project(playerX*roadW-x, camH, startPos*segL - (n>=N?N*segL:0));
+            Line &curLine = lines[lineIdx%lineCount];
+
+            float zPosProj = std::fmodf(zPos, lineCount * SEGMENT_LENGTH); // projection-relative Z position
+
+            if (lineIdx >= lineCount)
+                zPosProj -= lineCount * SEGMENT_LENGTH; // wrap around
+            
+            curLine.project(xPos*ROAD_WIDTH-x, camH, zPosProj);
             x+=dx;
-            dx+=l.curve;
+            dx+=curLine.curve;
             
-            l.clip=maxy;
-            if (l.Y>=maxy) continue;
-            maxy = l.Y;
+            Line nextLine = lines[(lineIdx + 1) % lineCount];
+            Line prevLine = lines[std::max(1, lineIdx - 1) % lineCount];
+
+            // blend between current and next line's height for smoothness
+            screenY = lerp(curLine.screenY, nextLine.screenY, zPosFrac);
+            curLine.clip=maxy;
+            if (screenY >= maxy) continue;
+            maxy = screenY;
             
-            Color grass  = (n/3)%2?Color(16,200,16):Color(0,154,0);
-            Color rumble = (n/3)%2?Color(255,255,255):Color(0,0,0);
-            Color road   = (n/3)%2?Color(107,107,107):Color(105,105,105);
+            Color grass  = (lineIdx/3)%2?Color(16,200,16):Color(0,154,0);
+            Color rumble = (lineIdx/3)%2?Color(255,255,255):Color(0,0,0);
+            Color road   = (lineIdx/3)%2?Color(107,107,107):Color(105,105,105);
             
-            Line p = lines[(n-1)%N]; //previous line
-            
-            drawQuad(app, grass, 0, p.Y, width, 0, l.Y, width);
-            drawQuad(app, rumble,p.X, p.Y, p.W*1.2, l.X, l.Y, l.W*1.2);
-            drawQuad(app, road,  p.X, p.Y, p.W, l.X, l.Y, l.W);
+            drawQuad(app, grass, 0, prevLine.screenY, WINDOW_WIDTH, 0, curLine.screenY, WINDOW_WIDTH);
+            drawQuad(app, rumble,prevLine.screenX, prevLine.screenY, prevLine.screenWidth*1.2f, curLine.screenX, curLine.screenY, curLine.screenWidth*1.2f);
+            drawQuad(app, road,  prevLine.screenX, prevLine.screenY, prevLine.screenWidth, curLine.screenX, curLine.screenY, curLine.screenWidth);
         }
 
         ////////draw objects////////
-        for(int n = startPos+300; n > startPos; n--)
-            lines[n%N].drawSprite(app);
+        for(int lineIdx = startPos+300; lineIdx > startPos; lineIdx--)
+            lines[lineIdx%lineCount].drawSprite(app);
 
         app.display();
     }
