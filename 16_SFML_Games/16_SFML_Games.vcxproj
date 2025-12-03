@@ -96,6 +96,8 @@
   <ItemGroup>
     <ClInclude Include="Connector.hpp" />
     <ClInclude Include="Grid.h" />
+    <ClInclude Include="outrun.h" />
+    <ClInclude Include="outrun_camera.h" />
     <ClInclude Include="Player.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

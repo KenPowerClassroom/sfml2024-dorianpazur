@@ -4,171 +4,103 @@ const int HEIGHT = 25;
 const int WIDTH = 40;
 const int tileSize = 18;
 
-#include"../16_SFML_Games/Grid.h"
-#include"../16_SFML_Games/Player.h"
+#include"../16_SFML_Games/outrun.h"
+#include"../16_SFML_Games/outrun_camera.h"
 
+TEST(Camera, SpeedsUpWhenHoldingAccelerator) {
+	Camera camera;
 
-TEST(Grid, HasWallsAndInterior) {
+	float prevSpeed = camera.speed();
 
-	Grid grid;
-
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(0, 0));
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(24, 39));
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(10, 10));
-
+	for (int i = 0; i < 60; i++) // presimulate for 60 frames
+	{
+		camera.resetModifiers();
+		camera.holdAccelerator(); // simulate input
+		camera.update();
+		EXPECT_NE(camera.speed(), 0.0f); // expect that it moved
+		EXPECT_GE(camera.speed(), prevSpeed); // expect that the speed is increasing or equal to previous
+		prevSpeed = camera.speed();
+	}
 }
 
-TEST(Grid, CreateNewWall) {
+TEST(Camera, SlowsDownWhenNotAccelerating) {
+	Camera camera;
 
-	Grid grid;
+	for (int i = 0; i < 60; i++) // presimulate for 60 frames
+	{
+		camera.resetModifiers();
+		camera.holdAccelerator(); // simulate input
+		camera.update();
+	}
 
-	grid.newWall(10, 10);
-	EXPECT_EQ(Grid::tile::NEW_WALL, grid.cell(10, 10));
+	float prevSpeed = camera.speed();
 
+	EXPECT_NE(prevSpeed, 0.0f); // should be at speed now
+
+	for (int i = 0; i < 60; i++) // simulate for 60 frames
+	{
+		camera.resetModifiers();
+		camera.update();
+		if (camera.speed() == 0.0f)
+		{
+			break; // break out when speed reaches 0
+		}
+		EXPECT_LT(camera.speed(), prevSpeed); // expect that the speed is decreasing
+		prevSpeed = camera.speed();
+	}
 }
 
+TEST(Camera, StaysInBoundsHorizontally) {
+	Camera camera;
 
-TEST(Grid, GridsIsClearedExceptForWalls) {
+	for (int i = 0; i < 240; i++) // presimulate for 240 frames
+	{
+		camera.resetModifiers();
+		camera.strafeLeft(); // simulate input
+		camera.update();
+		EXPECT_LT(camera.xPos(), 0.0f); // expect that it moved
+		EXPECT_GE(camera.xPos(), -X_POS_RANGE); // expect that it never exceeds the range
+	}
 
-	Grid grid;
+	EXPECT_EQ(camera.xPos(), -X_POS_RANGE); // expect that it moved to the boundary
 
-	grid.newWall(10, 10);
+	for (int i = 0; i < 240; i++) // simulate for 240 frames
+	{
+		camera.resetModifiers();
+		camera.strafeRight(); // simulate input
+		camera.update();
+		EXPECT_GT(camera.xPos(), -X_POS_RANGE); // expect that it moved
+		EXPECT_LE(camera.xPos(), X_POS_RANGE); // expect that it never exceeds the range
+	}
 
-	grid.clear();
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(0, 0));
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(24, 39));
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(10, 10));
-
+	EXPECT_EQ(camera.xPos(), X_POS_RANGE); // expect that it moved to the boundary
 }
 
-//------------------------
-//|                      |
-//|                      |
-//|         filled       |
-//|                      |
-//|                      |
-//|----------------------|
-//|                      |
-//|                      |
-//|         not filled   |
-//|                      |
-//|                      |
-//------------------------
+TEST(Camera, BrakesAndReverses) {
+	Camera camera;
 
-TEST(Grid, GridsIsFilledWithHorizWall) {
+	float prevSpeed = camera.speed();
 
-	Grid grid;
-
-	for(int i=1;i<WIDTH-1;i++)
-		grid.newWall(10, i);
-
-	grid.markConnectedCellsNotToBeFilled(11, 1);
-
-	grid.fillEmptyCells();
-
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(1, 1));
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(9, 38));
-
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(11, 1));
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(23, 38));
-
-}
-
-//------------------------
-//|                      |
-//|                      |
-//|        not filled    |
-//|                      |
-//|                      |
-//|-------------         |
-//|            |         |
-//|            |         |
-//|   filled   |         |
-//|            |         |
-//|            |         |
-//------------------------
-
-TEST(Grid, GridsIsFilledWithHorizAndVertWall) {
-
-	Grid grid;
-
-	for (int x = 1; x < 10; x++)
-		grid.newWall(10, x);
-	for (int y = 10; y < HEIGHT-1; y++)
-		grid.newWall(y, 10);
-
-	grid.markConnectedCellsNotToBeFilled(2, 2);
-
-	grid.fillEmptyCells();
-
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(11, 1));
-	EXPECT_EQ(Grid::tile::WALL, grid.cell(23, 9));
-
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(1, 1));
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(9, 38));
-	EXPECT_EQ(Grid::tile::EMPTY, grid.cell(23, 38));
-
-
-}
-
-
-TEST(Player, ConstrainedHorizontallyRight) {
-
-	Player p;
-
-	p.x = 10, p.y = 10;
-
-	p.goRight();
-
-	for (int i = 0; i < 100; i++)
-		p.move();
-
-	EXPECT_EQ(10, p.y);
-	EXPECT_EQ(WIDTH-1, p.x);
-}
-
-TEST(Player, ConstrainedHorizontallyLeft) {
-
-	Player p;
-
-	p.x = 10, p.y = 10;
-
-	p.goLeft();
-
-	for (int i = 0; i < 100; i++)
-		p.move();
-
-	EXPECT_EQ(10, p.y);
-	EXPECT_EQ(0, p.x);
-}
-
-TEST(Player, ConstrainedVerticallyUp) {
-
-	Player p;
-
-	p.x = 10, p.y = 10;
-
-	p.goUp();
-
-	for (int i = 0; i < 100; i++)
-		p.move();
-
-	EXPECT_EQ(0, p.y);
-	EXPECT_EQ(10, p.x);
-}
-
-TEST(Player, ConstrainedDiagonallyFast) {
-
-	Player p;
-
-	p.x = 10, p.y = 10;
-	p.dx = 5;
-	p.dy = 6;
-
+	for (int i = 0; i < 60; i++) // presimulate for 60 frames
+	{
+		camera.resetModifiers();
+		camera.holdAccelerator(); // simulate input
+		camera.update();
+		EXPECT_NE(camera.speed(), 0.0f); // expect that it moved
+		EXPECT_GE(camera.speed(), prevSpeed); // expect that the speed is increasing or equal to previous
+		prevSpeed = camera.speed();
+	}
 	
-	for (int i = 0; i < 100; i++)
-		p.move();
+	prevSpeed = camera.speed();
 
-	EXPECT_EQ(HEIGHT-1, p.y);
-	EXPECT_EQ(WIDTH-1, p.x);
+	for (int i = 0; i < 240; i++) // simulate for 240 frames (it takes some time to slow down)
+	{
+		camera.resetModifiers();
+		camera.holdBrakes(); // simulate input
+		camera.update();
+		EXPECT_LT(camera.speed(), prevSpeed); // expect that the speed is decreasing and eventually becomes negative
+		prevSpeed = camera.speed();
+	}
+
+	EXPECT_LT(camera.speed(), 0.0f); // expect that the speed is negative (reversing)
 }
